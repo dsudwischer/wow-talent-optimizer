@@ -72,6 +72,14 @@ def _make_talents_record(
     )
 
 
+class _SingleTreepLoopIterationResult:
+    def __init__(self, best_tree_so_far: PlayerTalentTree | None, best_dps_so_far: float,
+                 has_new_candidates: bool):
+        self.best_tree_so_far: PlayerTalentTree | None = best_tree_so_far
+        self.best_dps_so_far: float = best_dps_so_far
+        self.has_new_candidates: bool = has_new_candidates
+
+
 class BeamSearchOptimizer:
     def __init__(self, sim_runner: SimRunner, config: BeamSearchConfig | None = None):
         self._sim_runner = sim_runner
@@ -90,6 +98,54 @@ class BeamSearchOptimizer:
                 race=player.race,
             )
         )
+
+    def _single_tree_iteration(self, tree: PlayerTalentTree, player: Player, locked_talent_trees: LockedTalentTrees,
+                               dps_by_talent_str: dict[str, float], candidates: list[tuple[PlayerTalentTree, float]],
+                               best_tree_so_far: PlayerTalentTree | None, best_dps_so_far: float) -> _SingleTreepLoopIterationResult:
+        if tree.get_total_points_spent() <= tree.get_total_points_available():
+            tree_dps = dps_by_talent_str[tree.to_talent_string()]
+            candidates.append(
+                (tree, tree_dps)
+            )
+            if tree_dps > best_dps_so_far:
+                best_tree_so_far = tree
+                best_dps_so_far = tree_dps
+            return _SingleTreepLoopIterationResult(
+                best_tree_so_far, best_dps_so_far, False
+            )
+        decrementable_nodes = tree.find_nodes_to_decrement()
+        random.shuffle(decrementable_nodes)
+        has_new_candidates = False
+        for node_id, choice_index in decrementable_nodes[
+            : self._config.max_explorations_per_candidate
+        ]:
+            new_tree = tree.copy()
+            new_tree.decrement_node(node_id, choice_index)
+            spec_talent_str = new_tree.to_talent_string()
+            if spec_talent_str in dps_by_talent_str:
+                print("  Skipping already evaluated talent tree")
+                continue  # Exact tree has already been evaluated
+            sim_result = self._run_sim(
+                player,
+                _make_talents_record(locked_talent_trees, None, new_tree, None),
+            )
+            if sim_result is None:
+                continue  # Simulation failed
+            dps_by_talent_str[spec_talent_str] = sim_result.dps
+            candidates.append((new_tree, sim_result.dps))
+            has_new_candidates = True
+            print(
+                f"  DPS:{sim_result.dps}, Talents ({new_tree.get_total_points_spent()} / {new_tree.get_total_points_available()}): {spec_talent_str[:100]}..."
+            )
+            if (
+                    sim_result.dps > best_dps_so_far
+                    and new_tree.get_total_points_spent()
+                    <= new_tree.get_total_points_available()
+            ):
+                best_dps = sim_result.dps
+                best_tree_so_far = new_tree
+                print(f"  New valid best DPS found: {best_dps}")
+        return _SingleTreepLoopIterationResult(best_tree_so_far, best_dps_so_far, has_new_candidates)
 
     def beam_search_optimal_talents(
         self,
@@ -133,46 +189,9 @@ class BeamSearchOptimizer:
             candidates: list[tuple[PlayerTalentTree, float]] = []
             has_new_candidates = False
             for tree in beam:
-                if tree.get_total_points_spent() <= tree.get_total_points_available():
-                    tree_dps = dps_by_talent_str[tree.to_talent_string()]
-                    candidates.append(
-                        (tree, tree_dps)
-                    )
-                    if tree_dps > best_dps:
-                        best_tree_so_far = tree
-                        best_dps = tree_dps
-                    continue  # Already evaluated, but valid so keep in candidates
-                decrementable_nodes = tree.find_nodes_to_decrement()
-                random.shuffle(decrementable_nodes)
-                for node_id, choice_index in decrementable_nodes[
-                    : self._config.max_explorations_per_candidate
-                ]:
-                    new_tree = tree.copy()
-                    new_tree.decrement_node(node_id, choice_index)
-                    spec_talent_str = new_tree.to_talent_string()
-                    if spec_talent_str in dps_by_talent_str:
-                        print("  Skipping already evaluated talent tree")
-                        continue  # Exact tree has already been evaluated
-                    sim_result = self._run_sim(
-                        player,
-                        _make_talents_record(locked_talent_trees, None, new_tree, None),
-                    )
-                    if sim_result is None:
-                        continue  # Simulation failed
-                    dps_by_talent_str[spec_talent_str] = sim_result.dps
-                    candidates.append((new_tree, sim_result.dps))
-                    has_new_candidates = True
-                    print(
-                        f"  DPS:{sim_result.dps}, Talents ({new_tree.get_total_points_spent()} / {new_tree.get_total_points_available()}): {spec_talent_str[:100]}..."
-                    )
-                    if (
-                        sim_result.dps > best_dps
-                        and new_tree.get_total_points_spent()
-                        <= new_tree.get_total_points_available()
-                    ):
-                        best_dps = sim_result.dps
-                        best_tree_so_far = new_tree
-                        print(f"  New valid best DPS found: {best_dps}")
+                iteration_result = self._single_tree_iteration(tree, player, locked_talent_trees, dps_by_talent_str, candidates, best_tree_so_far, best_dps)
+                best_tree_so_far, best_dps = iteration_result.best_tree_so_far, iteration_result.best_dps_so_far
+                has_new_candidates = has_new_candidates or iteration_result.has_new_candidates
             if not has_new_candidates:
                 print("No new candidates found in this iteration, stopping.")
                 break
