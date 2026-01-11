@@ -5,6 +5,7 @@ from optimizer.algorithms.beam_search import (
     TalentBlockList,
     NodeChoicePair,
 )
+from optimizer.talents.player_choice import FixedTalentStringProvider
 from player import Player
 from simc import SimRunner
 from talents.converters.icy_veins import convert
@@ -19,7 +20,7 @@ def main() -> None:
     devourer = convert(iv_devourer)
     optimizer = BeamSearchOptimizer(
         sim_runner=SimRunner(),
-        config=BeamSearchConfig(beam_width=10, max_explorations_per_candidate=25),
+        config=BeamSearchConfig(beam_width=3, max_explorations_per_candidate=2),
     )
     result = optimizer.beam_search_optimal_talents(
         devourer,
@@ -29,9 +30,9 @@ def main() -> None:
             race="night_elf",
         ),
         locked_talent_trees=LockedTalentTrees(
-            locked_class_tree="vengeful_retreat:1/unrestrained_fury:1/aura_of_pain:1/internal_struggle:1/furious:1/final_breath:1/remorseless:1/soul_splitter:2",
+            locked_class_tree=FixedTalentStringProvider("vengeful_retreat:1/unrestrained_fury:1/aura_of_pain:1/internal_struggle:1/furious:1/final_breath:1/remorseless:1/soul_splitter:2"),
             locked_spec_tree=None,
-            locked_hero_tree="demonsurge:1/focused_hatred:1/improved_soul_rending:1/blind_focus:1/violent_transformation:1/enduring_torment:1/undying_embers:1/student_of_suffering:1/monster_rising:1/volatile_instinct:1/demonic_intensity:1",
+            locked_hero_tree=FixedTalentStringProvider("demonsurge:1/focused_hatred:1/improved_soul_rending:1/blind_focus:1/violent_transformation:1/enduring_torment:1/undying_embers:1/student_of_suffering:1/monster_rising:1/volatile_instinct:1/demonic_intensity:1"),
         ),
         talent_block_list=TalentBlockList(
             blocked_spec_talents=[

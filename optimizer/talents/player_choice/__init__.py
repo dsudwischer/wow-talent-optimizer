@@ -1,3 +1,4 @@
+import abc
 import random
 from collections import defaultdict
 from collections.abc import Container
@@ -111,7 +112,21 @@ class PlayerTalentNodeSelection:
         return current
 
 
-class PlayerTalentTree:
+class ITalentStringProvider(abc.ABC):
+    @abc.abstractmethod
+    def to_talent_string(self) -> str:
+        pass
+
+
+class FixedTalentStringProvider(ITalentStringProvider):
+    def __init__(self, talent_str: str):
+        self._talent_str = talent_str
+
+    def to_talent_string(self) -> str:
+        return self._talent_str
+
+
+class PlayerTalentTree(ITalentStringProvider):
     def __init__(self, tree_template: TalentTree, max_points_available: int):
         self._tree_template = tree_template
         self._template_node_by_id: dict[str, TalentTreeNode] = {

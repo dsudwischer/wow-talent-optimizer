@@ -4,7 +4,7 @@ import uuid
 from collections.abc import Iterable
 from typing import NamedTuple
 
-from optimizer.talents.player_choice import PlayerTalentTree
+from optimizer.talents.player_choice import PlayerTalentTree, ITalentStringProvider
 from player import Player
 from simc import SimRunner, SimInput, TalentsRecord, SimOutput
 from talents.models import ClassTalentForest
@@ -18,9 +18,9 @@ class BeamSearchConfig:
 
 @dataclasses.dataclass
 class BestTalentTreeResult:
-    best_class_tree_result: PlayerTalentTree | str
-    best_spec_tree_result: PlayerTalentTree | str
-    best_hero_tree_result: PlayerTalentTree | str
+    best_class_tree_result: ITalentStringProvider
+    best_spec_tree_result: ITalentStringProvider
+    best_hero_tree_result: ITalentStringProvider
 
 
 @dataclasses.dataclass
@@ -33,9 +33,9 @@ class BeamSearchOptimizationResult:
 class LockedTalentTrees:
     def __init__(
         self,
-        locked_class_tree: PlayerTalentTree | str | None = None,
-        locked_spec_tree: PlayerTalentTree | str | None = None,
-        locked_hero_tree: PlayerTalentTree | str | None = None,
+        locked_class_tree: ITalentStringProvider | None = None,
+        locked_spec_tree: ITalentStringProvider | None = None,
+        locked_hero_tree: ITalentStringProvider | None = None,
     ):
         self.locked_class_tree = locked_class_tree
         self.locked_spec_tree = locked_spec_tree
@@ -50,6 +50,26 @@ class NodeChoicePair(NamedTuple):
 class TalentBlockList:
     def __init__(self, blocked_spec_talents: Iterable[NodeChoicePair] | None = None):
         self.blocked_spec_talents: set[NodeChoicePair] = set(blocked_spec_talents or [])
+
+
+def _make_talents_record(
+        locked_talent_trees: LockedTalentTrees,
+        class_talents: ITalentStringProvider | None = None,
+        spec_talents: ITalentStringProvider | None = None,
+        hero_talents: ITalentStringProvider | None = None,
+) -> TalentsRecord:
+    if spec_talents is None and locked_talent_trees.locked_spec_tree is None:
+        raise ValueError("Spec talent tree is required. Consider providing a locked fallback.")
+    if class_talents is None and locked_talent_trees.locked_class_tree is None:
+        raise ValueError("Class talent tree is required. Consider providing a locked fallback.")
+    if hero_talents is None and locked_talent_trees.locked_hero_tree is None:
+        raise ValueError("Hero talent tree is required. Consider providing a locked fallback.")
+    return TalentsRecord(
+        # Pyright has false positives below which are checked by the conditions above
+        class_talents=class_talents or locked_talent_trees.locked_class_tree,  # type: ignore
+        spec_talents=spec_talents or locked_talent_trees.locked_spec_tree,  # type: ignore
+        hero_talents=hero_talents or locked_talent_trees.locked_hero_tree,  # type: ignore
+    )
 
 
 class BeamSearchOptimizer:
@@ -71,24 +91,6 @@ class BeamSearchOptimizer:
             )
         )
 
-    def _make_talents_record(
-        self, spec_talent_str, locked_talent_trees: LockedTalentTrees
-    ) -> TalentsRecord:
-        # ToDo: Make this more dynamic
-        return TalentsRecord(
-            class_talent_string=(
-                locked_talent_trees.locked_class_tree
-                if isinstance(locked_talent_trees.locked_class_tree, str)
-                else locked_talent_trees.locked_class_tree.to_talent_string()  # type: ignore
-            ),
-            spec_talent_string=spec_talent_str,
-            hero_talent_string=(
-                locked_talent_trees.locked_hero_tree
-                if isinstance(locked_talent_trees.locked_hero_tree, str)
-                else locked_talent_trees.locked_hero_tree.to_talent_string()  # type: ignore
-            ),
-        )
-
     def beam_search_optimal_talents(
         self,
         forest_template: ClassTalentForest,
@@ -98,15 +100,7 @@ class BeamSearchOptimizer:
     ) -> BeamSearchOptimizationResult:
         locked_talent_trees = locked_talent_trees or LockedTalentTrees()
         talent_block_list = talent_block_list or TalentBlockList()
-        if (
-            locked_talent_trees.locked_class_tree is None
-            or locked_talent_trees.locked_hero_tree is None
-        ):
-            raise NotImplementedError(
-                "Only spec tree optimization is supported in this implementation."
-            )
-        if locked_talent_trees.locked_spec_tree is not None:
-            raise ValueError("Spec tree is locked, no optimization needed.")
+
         spec_tree = PlayerTalentTree(
             forest_template.spec_tree, player.get_available_spec_talent_points()
         )
@@ -119,8 +113,8 @@ class BeamSearchOptimizer:
 
         base_output = self._run_sim(
             player,
-            self._make_talents_record(
-                spec_tree.to_talent_string(), locked_talent_trees
+            _make_talents_record(
+                locked_talent_trees, None, spec_tree, None
             ),
         )
         if not base_output:
@@ -161,7 +155,7 @@ class BeamSearchOptimizer:
                         continue  # Exact tree has already been evaluated
                     sim_result = self._run_sim(
                         player,
-                        self._make_talents_record(spec_talent_str, locked_talent_trees),
+                        _make_talents_record(locked_talent_trees, None, new_tree, None),
                     )
                     if sim_result is None:
                         continue  # Simulation failed
